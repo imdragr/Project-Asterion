@@ -1,0 +1,24 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://topdoc.org/vex/asterion/2026-06-28",
+  "author": "imdragr",
+  "role": "Project Asterion maintainers",
+  "timestamp": "2026-06-28T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-12087",
+        "description": "Out-of-bounds heap read in Perl Socket module's pack_ip_mreq_source() (Socket < 2.041)."
+      },
+      "products": [
+        {
+          "@id": "pkg:deb/debian/perl@5.40.1-6?os_distro=trixie&os_name=debian&os_version=13"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Asterion is a Python/FastAPI service; it executes no Perl and never calls Socket::pack_ip_mreq_source(). perl is a transitive Debian 'essential' dependency of the python:3.13-slim base image, not an application dependency. The vulnerable function requires a caller passing an attacker-controlled source argument shorter than 4 bytes, which has no reachable path in this service. No patched perl was available in Debian as of 2026-06-28; the base stage runs apt-get upgrade so the fix is absorbed automatically once published. NOTE: the product purl is pinned to perl@5.40.1-6 — if the package version changes (e.g. after a Debian update), this statement stops matching and the CVE re-surfaces for re-evaluation, which is the intended behavior."
+    }
+  ]
+}

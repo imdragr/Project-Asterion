@@ -1,3 +1,4 @@
+name: asterion
 services:
     app:
         build: { context: ./server, target: dev }
@@ -5,21 +6,119 @@ services:
             - ./server:/code # bind-mount → hot reload + exposes .env.keys locally
         ports: ["8000:8000"]
         environment:
-            DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+            DATABASE_URL: postgresql+asyncpg://app:app@app-db:5432/app
         depends_on:
-            db: { condition: service_healthy }
-    db:
+            app-db: { condition: service_healthy }
+            intel-db: { condition: service_healthy }
+        networks:
+            - app-net
+            - app-db-net
+            - intel-db-net
+    app-db:
         image: postgres:17
         environment:
             POSTGRES_USER: app
             POSTGRES_PASSWORD: app
             POSTGRES_DB: app
         ports: ["5432:5432"]
-        volumes: [pgdata:/var/lib/postgresql/data]
+        volumes: [appdata:/var/lib/postgresql/data]
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U app"]
             interval: 2s
             timeout: 3s
             retries: 20
+        networks:
+            - app-db-net
+    intel-db:
+        image: clickhouse/clickhouse-server:26.3
+        ports: ["8123:8123"]
+        environment:
+            CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+        volumes:
+            - inteldata:/var/lib/clickhouse
+            - intellogdata:/var/log/clickhouse-server
+            - ./config/intel_config.xml:/etc/clickhouse-server/config.d/docker.xml
+        ulimits:
+            nofile:
+                soft: 262144
+                hard: 262144
+        deploy:
+            resources:
+                limits:
+                    memory: 4G
+                reservations:
+                    memory: 2G
+        networks:
+            - intel-db-net
+        healthcheck:
+            test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+    observability-db:
+        image: clickhouse/clickhouse-server:26.3
+        ports: ["8124:8123"]
+        environment:
+            CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+        volumes:
+            - observabilitydata:/var/lib/clickhouse
+            - observabilitylogdata:/var/log/clickhouse-server
+            - ./config/observability_config.xml:/etc/clickhouse-server/config.d/docker.xml
+        ulimits:
+            nofile:
+                soft: 262144
+                hard: 262144
+        deploy:
+            resources:
+                limits:
+                    memory: 4G
+                reservations:
+                    memory: 2G
+        healthcheck:
+            test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+        networks:
+            - observability-db-net
+        profiles:
+            - observability
+    workflow-db:
+        image: postgres:17
+        environment:
+            POSTGRES_USER: workflow
+            POSTGRES_PASSWORD: workflow
+            POSTGRES_DB: workflow
+        ports: ["5433:5432"]
+        volumes:
+            - workflowdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U workflow"]
+            interval: 2s
+            timeout: 3s
+            retries: 20
+        networks:
+            - workflow-db-net
+        profiles:
+            - workflow
 volumes:
-    pgdata:
+    appdata:
+    inteldata:
+    intellogdata:
+    observabilitydata:
+    observabilitylogdata:
+    workflowdata:
+networks:
+    # every db will have it's own private internal network which, will be isolated from the external world
+    # and only the requisite app service will be allowed to communicate with it - separation of concerns
+    app-net:
+    app-db-net:
+        internal: true
+    intel-db-net:
+        internal: true
+    observability-net:
+    observability-db-net:
+        internal: true
+    workflow-net:
+    workflow-db-net:
+        internal: true

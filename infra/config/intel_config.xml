@@ -1,0 +1,14 @@
+<clickhouse>
+    <listen_host>0.0.0.0</listen_host>
+    <max_connections>50</max_connections>
+    <max_concurrent_queries>10</max_concurrent_queries>
+
+    <!-- Memory settings for 4GB container -->
+    <max_memory_usage>4000000000</max_memory_usage>
+    <!-- These max_bytes_before_external_* parameters control when ClickHouse spills
+    intermediate results to disk. Ideal to set them to around 60–70% of the container's
+    available memory. If they're too low, we'll incur unnecessary disk I/O; too high, and
+    queries may crash due to memory exhaustion. -->
+    <max_bytes_before_external_group_by>3000000000</max_bytes_before_external_group_by>
+    <max_bytes_before_external_sort>3000000000</max_bytes_before_external_sort>
+</clickhouse>
