@@ -55,11 +55,53 @@ services:
             interval: 5s
             timeout: 5s
             retries: 10
+    hyperdx:
+        image: hyperdx/hyperdx:2.29.0
+        ports: ["8080:8080", "8001:8000"]
+        environment:
+            MONGO_URI: "mongodb://hyperdx:hyperdx@hyperdx-db:27017/hyperdx?authSource=admin"
+            FRONTEND_URL: http://localhost:8080
+            HYPERDX_API_KEY: ${HYPERDX_API_KEY:-mysecretapikey}
+            HYPERDX_LOG_LEVEL: ${HYPERDX_LOG_LEVEL:-info}
+            SERVER_URL: http://127.0.0.1:8000
+            OPAMP_PORT: 4320
+            OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+            USAGE_STATS_ENABLED: ${USAGE_STATS_ENABLED:-false}
+            DEFAULT_CONNECTIONS: '[{"name":"Observability DB","host":"http://observability-db:8123","username":"observability","password":"observability"}]'
+            DEFAULT_SOURCES: '[{"from":{"databaseName":"default","tableName":"otel_logs"},"kind":"log","timestampValueExpression":"TimestampTime","name":"Logs","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"Observability DB","traceSourceId":"Traces","sessionSourceId":"Sessions","metricSourceId":"Metrics"},{"from":{"databaseName":"default","tableName":"otel_traces"},"kind":"trace","timestampValueExpression":"Timestamp","name":"Traces","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"SpanName","serviceNameExpression":"ServiceName","eventAttributesExpression":"SpanAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName","traceIdExpression":"TraceId","spanIdExpression":"SpanId","durationExpression":"Duration","durationPrecision":9,"parentSpanIdExpression":"ParentSpanId","spanNameExpression":"SpanName","spanKindExpression":"SpanKind","statusCodeExpression":"StatusCode","statusMessageExpression":"StatusMessage","connection":"Observability DB","logSourceId":"Logs","sessionSourceId":"Sessions","metricSourceId":"Metrics"},{"from":{"databaseName":"default","tableName":""},"kind":"metric","timestampValueExpression":"TimeUnix","name":"Metrics","resourceAttributesExpression":"ResourceAttributes","metricTables":{"gauge":"otel_metrics_gauge","histogram":"otel_metrics_histogram","sum":"otel_metrics_sum","_id":"682586a8b1f81924e628e808","id":"682586a8b1f81924e628e808"},"connection":"Observability DB","logSourceId":"Logs","traceSourceId":"Traces","sessionSourceId":"Sessions"},{"from":{"databaseName":"default","tableName":"hyperdx_sessions"},"kind":"session","timestampValueExpression":"TimestampTime","name":"Sessions","displayedTimestampValueExpression":"Timestamp","implicitColumnExpression":"Body","serviceNameExpression":"ServiceName","bodyExpression":"Body","eventAttributesExpression":"LogAttributes","resourceAttributesExpression":"ResourceAttributes","defaultTableSelectExpression":"Timestamp,ServiceName,SeverityText,Body","severityTextExpression":"SeverityText","traceIdExpression":"TraceId","spanIdExpression":"SpanId","connection":"Observability DB","logSourceId":"Logs","traceSourceId":"Traces","metricSourceId":"Metrics"}]'
+        depends_on:
+            hyperdx-db: { condition: service_healthy }
+            observability-db: { condition: service_healthy }
+        networks:
+            - observability-net
+            - observability-db-net
+            - hyperdx-db-net
+        profiles:
+            - observability
+    hyperdx-db:
+        image: mongo:8.3.4
+        volumes:
+            - hyperdxdb:/data/db
+        healthcheck:
+            test: mongosh --eval 'db.runCommand("ping").ok' --quiet
+            interval: 30s
+            timeout: 10s
+            retries: 5
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: hyperdx
+            MONGO_INITDB_ROOT_PASSWORD: hyperdx
+        networks:
+            - hyperdx-db-net
+        profiles:
+            - observability
     observability-db:
         image: clickhouse/clickhouse-server:26.3
-        ports: ["8124:8123"]
+        ports: ["8124:8123", "9000:9000"]
         environment:
             CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+            CLICKHOUSE_USER: observability
+            CLICKHOUSE_PASSWORD: observability
+            CLICKHOUSE_DB: observability
         volumes:
             - observabilitydata:/var/lib/clickhouse
             - observabilitylogdata:/var/log/clickhouse-server
@@ -83,6 +125,25 @@ services:
             - observability-db-net
         profiles:
             - observability
+    otel-collector:
+        image: hyperdx/hyperdx-otel-collector:2.29.0
+        # 13133: health_check extension, 24225: fluentd receiver, 4317: OTLP gRPC receiver, 4318: OTLP http receiver
+        ports: ["13133:13133", "24225:24225", "4317:4317", "4318:4318"]
+        environment:
+            CLICKHOUSE_ENDPOINT: "tcp://observability-db:9000?dial_timeout=10s"
+            HYPERDX_OTEL_EXPORTER_CLICKHOUSE_DATABASE: observability
+            HYPERDX_LOG_LEVEL: ${HYPERDX_LOG_LEVEL-info}
+            OPAMP_SERVER_URL: "http://hyperdx:4320"
+            # TODO: use new schema
+            HYPERDX_OTEL_EXPORTER_CREATE_LEGACY_SCHEMA: "true"
+        restart: always
+        networks:
+            - observability-net
+            - observability-db-net
+        depends_on:
+            observability-db: { condition: service_healthy }
+        profiles:
+            - observability
     workflow-db:
         image: postgres:17
         environment:
@@ -103,6 +164,7 @@ services:
             - workflow
 volumes:
     appdata:
+    hyperdxdb:
     inteldata:
     intellogdata:
     observabilitydata:
@@ -118,6 +180,8 @@ networks:
         internal: true
     observability-net:
     observability-db-net:
+        internal: true
+    hyperdx-db-net:
         internal: true
     workflow-net:
     workflow-db-net:
